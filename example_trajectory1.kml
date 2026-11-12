@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Trajectory Analysis Example</name>
+    <Placemark>
+      <name>Trajectoire Source A</name>
+      <description>Aircraft trajectory from source A</description>
+      <LineString>
+        <tessellate>1</tessellate>
+        <coordinates>
+          -1.5432,48.8566,1000
+          -1.5425,48.8570,1050
+          -1.5418,48.8574,1100
+          -1.5410,48.8578,1150
+          -1.5402,48.8582,1200
+          -1.5395,48.8586,1250
+          -1.5388,48.8590,1300
+          -1.5380,48.8594,1350
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>
