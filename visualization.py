@@ -135,6 +135,10 @@ class TrajectoryVisualizer:
         ax1.plot(self.lateral_dev, 'g-', linewidth=2, marker='o', markersize=4)
         ax1.axhline(y=self.results['mean_lateral_deviation'], 
                    color='r', linestyle='--', label=f'Mean: {self.results["mean_lateral_deviation"]:.2f}m')
+        ax1.axhline(y=self.results['mean_lateral_deviation'] + self.results['std_lateral_deviation'],
+                   color='orange', linestyle=':', label=f'Mean + Std: {self.results["mean_lateral_deviation"] + self.results["std_lateral_deviation"]:.2f}m')
+        ax1.axhline(y=self.results['mean_lateral_deviation'] - self.results['std_lateral_deviation'],
+                   color='orange', linestyle=':', label=f'Mean - Std: {self.results["mean_lateral_deviation"] - self.results["std_lateral_deviation"]:.2f}m')
         ax1.set_xlabel('Point Index', fontsize=10)
         ax1.set_ylabel('Lateral Deviation (m)', fontsize=10)
         ax1.set_title('Lateral Deviation Between Trajectories', fontsize=12, fontweight='bold')
@@ -145,6 +149,10 @@ class TrajectoryVisualizer:
         ax2.plot(self.vertical_dev, 'm-', linewidth=2, marker='s', markersize=4)
         ax2.axhline(y=self.results['mean_vertical_deviation'], 
                    color='r', linestyle='--', label=f'Mean: {self.results["mean_vertical_deviation"]:.2f}m')
+        ax2.axhline(y=self.results['mean_vertical_deviation'] + self.results['std_vertical_deviation'],
+                   color='orange', linestyle=':', label=f'Mean + Std: {self.results["mean_vertical_deviation"] + self.results["std_vertical_deviation"]:.2f}m')
+        ax2.axhline(y=self.results['mean_vertical_deviation'] - self.results['std_vertical_deviation'],
+                   color='orange', linestyle=':', label=f'Mean - Std: {self.results["mean_vertical_deviation"] - self.results["std_vertical_deviation"]:.2f}m')
         ax2.set_xlabel('Point Index', fontsize=10)
         ax2.set_ylabel('Vertical Deviation (m)', fontsize=10)
         ax2.set_title('Vertical Deviation (Altitude Difference)', fontsize=12, fontweight='bold')
