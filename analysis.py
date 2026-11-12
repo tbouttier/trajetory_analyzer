@@ -83,8 +83,8 @@ def calculate_vertical_deviation(
         raise ValueError("Altitude arrays must have the same shape")
     
     # Handle None values
-    traj1_altitudes = np.where(traj1_altitudes == None, 0, traj1_altitudes)
-    traj2_altitudes = np.where(traj2_altitudes == None, 0, traj2_altitudes)
+    traj1_altitudes = np.where(pd.isna(traj1_altitudes), 0, traj1_altitudes)
+    traj2_altitudes = np.where(pd.isna(traj2_altitudes), 0, traj2_altitudes)
     
     return np.abs(traj1_altitudes - traj2_altitudes)
 
@@ -120,7 +120,8 @@ def resample_trajectory(
 
 def align_trajectories(
     traj1: np.ndarray,
-    traj2: np.ndarray
+    traj2: np.ndarray,
+    method: str = 'nearest'
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Align two trajectories to the same number of points.
@@ -128,37 +129,86 @@ def align_trajectories(
     Args:
         traj1: Array of shape (N, 3) - (lon, lat, alt)
         traj2: Array of shape (M, 3) - (lon, lat, alt)
+        method: Alignment method - 'interpolation' or 'nearest'
         
     Returns:
         Tuple of aligned arrays with same length
     """
-    min_length = min(len(traj1), len(traj2))
+    if method == 'nearest':
+        # Find nearest neighbor alignment
+        # For each point in traj1, find the closest point in traj2
+        aligned_traj1, aligned_traj2 = align_by_nearest(traj1, traj2)
+    else:
+        # Default: interpolation
+        min_length = min(len(traj1), len(traj2))
+        
+        if len(traj1) != min_length:
+            traj1 = resample_trajectory(traj1, min_length)
+        
+        if len(traj2) != min_length:
+            traj2 = resample_trajectory(traj2, min_length)
+        
+        aligned_traj1, aligned_traj2 = traj1, traj2
     
-    if len(traj1) != min_length:
-        traj1 = resample_trajectory(traj1, min_length)
+    return aligned_traj1, aligned_traj2
+
+
+def align_by_nearest(
+    traj1: np.ndarray,
+    traj2: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Align trajectories by finding nearest neighbors.
+    For each point in traj1, find the closest point in traj2.
     
-    if len(traj2) != min_length:
-        traj2 = resample_trajectory(traj2, min_length)
+    Args:
+        traj1: Reference trajectory (lon, lat, alt)
+        traj2: Trajectory to align
+        
+    Returns:
+        Tuple of (aligned_traj1, aligned_traj2) where aligned_traj2 contains
+        the nearest points from traj2 for each point in traj1
+    """
+    aligned_traj1 = []
+    aligned_traj2 = []
     
-    return traj1, traj2
+    for point1 in traj1:
+        # Find the closest point in traj2
+        min_dist = float('inf')
+        closest_point = None
+        
+        for point2 in traj2:
+            # Calculate 2D distance (lon, lat) in degrees
+            dist = np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+            if dist < min_dist:
+                min_dist = dist
+                closest_point = point2
+        
+        if closest_point is not None:
+            aligned_traj1.append(point1)
+            aligned_traj2.append(closest_point)
+    
+    return np.array(aligned_traj1), np.array(aligned_traj2)
 
 
 class TrajectoryAnalyzer:
     """Analyzer for comparing two trajectories."""
     
-    def __init__(self, traj1: pd.DataFrame, traj2: pd.DataFrame):
+    def __init__(self, traj1: pd.DataFrame, traj2: pd.DataFrame, alignment_method: str = 'nearest'):
         """
         Initialize analyzer with two trajectory DataFrames.
         
         Args:
-            traj1: First trajectory DataFrame
+            traj1: First trajectory DataFrame (reference)
             traj2: Second trajectory DataFrame
+            alignment_method: Method for aligning trajectories - 'interpolation' or 'nearest'
         """
         self.traj1 = traj1
         self.traj2 = traj2
+        self.alignment_method = alignment_method
         self.traj1_name = traj1['name'].iloc[0] if 'name' in traj1.columns else "Trajectory 1"
         self.traj2_name = traj2['name'].iloc[0] if 'name' in traj2.columns else "Trajectory 2"
-        
+    
     def analyze(self) -> Dict:
         """
         Perform complete analysis of trajectory deviations.
@@ -176,7 +226,7 @@ class TrajectoryAnalyzer:
         full_traj1 = self.traj1[['longitude', 'latitude', 'altitude']].values
         full_traj2 = self.traj2[['longitude', 'latitude', 'altitude']].values
         
-        aligned_traj1, aligned_traj2 = align_trajectories(full_traj1, full_traj2)
+        aligned_traj1, aligned_traj2 = align_trajectories(full_traj1, full_traj2, method=self.alignment_method)
         
         # Calculate deviations
         lateral_dev = calculate_lateral_deviation(

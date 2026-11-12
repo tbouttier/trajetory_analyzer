@@ -78,6 +78,18 @@ Examples:
         action='store_true',
         help='Save comparison results to CSV'
     )
+    parser.add_argument(
+        '--alignment', '-a',
+        type=str,
+        default='nearest',
+        choices=['nearest', 'interpolation'],
+        help='Alignment method: nearest (default) or interpolation'
+    )
+    parser.add_argument(
+        '--filter-no-time',
+        action='store_true',
+        help='Filter out points without timestamps'
+    )
     
     args = parser.parse_args()
     
@@ -106,6 +118,14 @@ Examples:
         trajectories = parse_kml_files(args.kml_files)
         traj1 = trajectories[args.kml_files[0]]
         traj2 = trajectories[args.kml_files[1]]
+        
+        # Filter points without timestamps if requested
+        if args.filter_no_time:
+            if 'timestamp' in traj1.columns and traj1['timestamp'].notna().any():
+                traj1 = traj1[traj1['timestamp'].notna()].copy()
+            if 'timestamp' in traj2.columns and traj2['timestamp'].notna().any():
+                traj2 = traj2[traj2['timestamp'].notna()].copy()
+        
         print(f"  {args.kml_files[0]}: {len(traj1)} points")
         print(f"  {args.kml_files[1]}: {len(traj2)} points")
     except Exception as e:
@@ -113,8 +133,8 @@ Examples:
         sys.exit(1)
     
     # Analyze trajectories
-    print("\nAnalyzing trajectories...")
-    analyzer = TrajectoryAnalyzer(traj1, traj2)
+    print(f"\nAnalyzing trajectories with {args.alignment} alignment...")
+    analyzer = TrajectoryAnalyzer(traj1, traj2, alignment_method=args.alignment)
     results = analyzer.analyze()
     
     # Print summary

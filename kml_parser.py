@@ -1,6 +1,7 @@
 """
 KML Parser for trajectory analysis.
 Extracts coordinates and altitudes from KML files using lxml.
+Supports LineString, Point, MultiGeometry, and gx:Track elements.
 """
 
 from lxml import etree
@@ -14,6 +15,8 @@ class KMLParser:
     """Parser for KML files containing aircraft trajectories."""
     
     KML_NS = 'http://www.opengis.net/kml/2.2'
+    KML_NS_GOOGLE = 'http://earth.google.com/kml/2.0'
+    GX_NS = 'http://www.google.com/kml/ext/2.2'
     
     def __init__(self, kml_file: str):
         """
@@ -26,6 +29,32 @@ class KMLParser:
         self.trajectory = None
         self.name = None
     
+    def _find_element(self, parent, local_name: str, namespaces: List[Dict]) -> Optional[etree.Element]:
+        """Find element trying multiple namespaces."""
+        for ns in namespaces:
+            elem = parent.find(f'{{{ns.get("kml", "")}}}{local_name}' if "kml" in ns else local_name)
+            if elem is not None:
+                return elem
+        # Try without namespace
+        elem = parent.find(local_name)
+        if elem is not None:
+            return elem
+        # Try with any namespace
+        elem = parent.find(f'.//*{local_name}')
+        return elem
+    
+    def _find_elements(self, parent, local_name: str, namespaces: List[Dict]) -> List[etree.Element]:
+        """Find all elements trying multiple namespaces."""
+        all_elems = []
+        for ns in namespaces:
+            elems = parent.findall(f'.//{{{ns.get("kml", "")}}}{local_name}' if "kml" in ns else f'.//{local_name}')
+            all_elems.extend(elems)
+        # Try without namespace
+        elems = parent.findall(f'.//{local_name}')
+        all_elems.extend(elems)
+        # Remove duplicates
+        return list(dict.fromkeys(all_elems))
+    
     def parse(self) -> pd.DataFrame:
         """
         Parse KML file and extract trajectory data.
@@ -36,39 +65,86 @@ class KMLParser:
         tree = etree.parse(self.kml_file)
         root = tree.getroot()
         
-        ns = {'kml': self.KML_NS}
+        # Define namespaces to try
+        namespaces = [
+            {'kml': self.KML_NS, 'gx': self.GX_NS},
+            {'kml': self.KML_NS_GOOGLE, 'gx': self.GX_NS},
+            {}
+        ]
         
         # Find all Placemark elements
-        placemarks = root.findall('.//kml:Placemark', ns)
-        
+        placemarks = []
+        for ns in namespaces:
+            if 'kml' in ns:
+                placemarks = root.findall(f'.//{{{ns["kml"]}}}Placemark')
+                if placemarks:
+                    break
         if not placemarks:
-            # Try without namespace
             placemarks = root.findall('.//Placemark')
         
         trajectory_data = []
         
         for placemark in placemarks:
             # Get name
-            name_elem = placemark.find('kml:name', ns)
-            if name_elem is None:
-                name_elem = placemark.find('name')
-            name = name_elem.text if name_elem is not None else "Unknown"
+            name = "Unknown"
+            for ns in namespaces:
+                if 'kml' in ns:
+                    name_elem = placemark.find(f'{{{ns["kml"]}}}name')
+                else:
+                    name_elem = placemark.find('name')
+                if name_elem is not None and name_elem.text:
+                    name = name_elem.text
+                    break
             
-            # Get timestamp
+            # Try to parse gx:Track first (has individual timestamps per point)
+            gx_track = None
+            for ns in namespaces:
+                if 'gx' in ns:
+                    gx_track = placemark.find(f'.//{{{ns["gx"]}}}Track')
+                else:
+                    gx_track = placemark.find('.//Track')
+                if gx_track is not None:
+                    break
+            
+            if gx_track is not None:
+                # Parse gx:Track with individual <when> and <gx:coord> elements
+                coords = self._parse_gx_track(gx_track, namespaces)
+                timestamps = self._parse_gx_track_timestamps(gx_track, namespaces)
+                
+                for i, coord in enumerate(coords):
+                    timestamp = timestamps[i] if i < len(timestamps) else None
+                    trajectory_data.append({
+                        'timestamp': timestamp,
+                        'latitude': coord[1],
+                        'longitude': coord[0],
+                        'altitude': coord[2] if len(coord) > 2 else None,
+                        'name': name
+                    })
+                continue
+            
+            # Get timestamp (for LineString/Point)
             timestamp = None
-            time_elem = placemark.find('kml:TimeStamp/kml:when', ns)
-            if time_elem is None:
-                time_elem = placemark.find('TimeStamp/when')
-            if time_elem is not None:
-                timestamp = time_elem.text
+            for ns in namespaces:
+                if 'kml' in ns:
+                    time_elem = placemark.find(f'{{{ns["kml"]}}}TimeStamp/{{{ns["kml"]}}}when')
+                else:
+                    time_elem = placemark.find('TimeStamp/when')
+                if time_elem is not None and time_elem.text:
+                    timestamp = time_elem.text
+                    break
             
             # Extract coordinates from LineString
-            linestring = placemark.find('kml:LineString', ns)
-            if linestring is None:
-                linestring = placemark.find('LineString')
+            linestring = None
+            for ns in namespaces:
+                if 'kml' in ns:
+                    linestring = placemark.find(f'{{{ns["kml"]}}}LineString')
+                else:
+                    linestring = placemark.find('LineString')
+                if linestring is not None:
+                    break
             
             if linestring is not None:
-                coords_text = self._get_coords_text(linestring, ns)
+                coords_text = self._get_coords_text(linestring, namespaces)
                 if coords_text:
                     coords = self._parse_coordinates(coords_text)
                     for coord in coords:
@@ -79,14 +155,20 @@ class KMLParser:
                             'altitude': coord[2] if len(coord) > 2 else None,
                             'name': name
                         })
+                continue
             
             # Extract coordinates from Point
-            point = placemark.find('kml:Point', ns)
-            if point is None:
-                point = placemark.find('Point')
+            point = None
+            for ns in namespaces:
+                if 'kml' in ns:
+                    point = placemark.find(f'{{{ns["kml"]}}}Point')
+                else:
+                    point = placemark.find('Point')
+                if point is not None:
+                    break
             
             if point is not None:
-                coords_text = self._get_coords_text(point, ns)
+                coords_text = self._get_coords_text(point, namespaces)
                 if coords_text:
                     coords = self._parse_coordinates(coords_text)
                     if coords:
@@ -98,26 +180,31 @@ class KMLParser:
                             'altitude': coord[2] if len(coord) > 2 else None,
                             'name': name
                         })
+                continue
             
             # Extract coordinates from MultiGeometry
-            multigeom = placemark.find('kml:MultiGeometry', ns)
-            if multigeom is None:
-                multigeom = placemark.find('MultiGeometry')
+            multigeom = None
+            for ns in namespaces:
+                if 'kml' in ns:
+                    multigeom = placemark.find(f'{{{ns["kml"]}}}MultiGeometry')
+                else:
+                    multigeom = placemark.find('MultiGeometry')
+                if multigeom is not None:
+                    break
             
             if multigeom is not None:
                 for child in multigeom:
-                    if child.tag.endswith('LineString') or child.tag.endswith('Point'):
-                        coords_text = self._get_coords_text(child, ns)
-                        if coords_text:
-                            coords = self._parse_coordinates(coords_text)
-                            for coord in coords:
-                                trajectory_data.append({
-                                    'timestamp': timestamp,
-                                    'latitude': coord[1],
-                                    'longitude': coord[0],
-                                    'altitude': coord[2] if len(coord) > 2 else None,
-                                    'name': name
-                                })
+                    coords_text = self._get_coords_text(child, namespaces)
+                    if coords_text:
+                        coords = self._parse_coordinates(coords_text)
+                        for coord in coords:
+                            trajectory_data.append({
+                                'timestamp': timestamp,
+                                'latitude': coord[1],
+                                'longitude': coord[0],
+                                'altitude': coord[2] if len(coord) > 2 else None,
+                                'name': name
+                            })
         
         if not trajectory_data:
             raise ValueError(f"No trajectory data found in {self.kml_file}")
@@ -127,14 +214,85 @@ class KMLParser:
         
         return self.trajectory
     
-    def _get_coords_text(self, element, ns: Dict) -> Optional[str]:
-        """Extract coordinates text from element."""
-        coords_elem = element.find('kml:coordinates', ns)
-        if coords_elem is None:
-            coords_elem = element.find('coordinates')
+    def _parse_gx_track(self, gx_track, namespaces: List[Dict]) -> List[Tuple[float, float, float]]:
+        """
+        Parse gx:Track element to extract coordinates.
         
+        Args:
+            gx_track: The gx:Track element
+            namespaces: List of namespace dictionaries
+            
+        Returns:
+            List of (lon, lat, alt) tuples
+        """
+        coords = []
+        
+        # Find all gx:coord elements
+        gx_coords = []
+        for ns in namespaces:
+            if 'gx' in ns:
+                gx_coords = gx_track.findall(f'.//{{{ns["gx"]}}}coord')
+            else:
+                gx_coords = gx_track.findall('.//coord')
+            if gx_coords:
+                break
+        
+        for gx_coord in gx_coords:
+            if gx_coord.text:
+                parts = gx_coord.text.strip().split()
+                if len(parts) >= 2:
+                    lon = float(parts[0])
+                    lat = float(parts[1])
+                    alt = float(parts[2]) if len(parts) > 2 else 0.0
+                    coords.append((lon, lat, alt))
+        
+        return coords
+    
+    def _parse_gx_track_timestamps(self, gx_track, namespaces: List[Dict]) -> List[str]:
+        """
+        Parse gx:Track element to extract timestamps.
+        
+        Args:
+            gx_track: The gx:Track element
+            namespaces: List of namespace dictionaries
+            
+        Returns:
+            List of timestamp strings
+        """
+        timestamps = []
+        
+        # Find all when elements
+        when_elems = []
+        for ns in namespaces:
+            if 'kml' in ns:
+                when_elems = gx_track.findall(f'.//{{{ns["kml"]}}}when')
+            else:
+                when_elems = gx_track.findall('.//when')
+            if when_elems:
+                break
+        
+        for when_elem in when_elems:
+            if when_elem.text:
+                timestamps.append(when_elem.text.strip())
+        
+        return timestamps
+    
+    def _get_coords_text(self, element, namespaces: List[Dict]) -> Optional[str]:
+        """Extract coordinates text from element."""
+        coords_elem = None
+        for ns in namespaces:
+            if 'kml' in ns:
+                coords_elem = element.find(f'{{{ns["kml"]}}}coordinates')
+            else:
+                coords_elem = element.find('coordinates')
+            if coords_elem is not None and coords_elem.text:
+                return coords_elem.text.strip()
+        
+        # Try without namespace
+        coords_elem = element.find('coordinates')
         if coords_elem is not None and coords_elem.text:
             return coords_elem.text.strip()
+        
         return None
     
     def _parse_coordinates(self, coords_text: str) -> List[Tuple[float, float, float]]:
@@ -149,8 +307,8 @@ class KMLParser:
         """
         coords = []
         
-        # Remove extra whitespace
-        coords_text = re.sub(r'\s+', ' ', coords_text).strip()
+        # Remove extra whitespace and newlines
+        coords_text = re.sub(r'[\r\n\s]+', ' ', coords_text).strip()
         
         # Split by whitespace and parse each coordinate
         for coord_str in coords_text.split():
