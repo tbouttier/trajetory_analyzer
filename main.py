@@ -82,8 +82,8 @@ Examples:
         '--alignment', '-a',
         type=str,
         default='nearest',
-        choices=['nearest', 'interpolation'],
-        help='Alignment method: nearest (default) or interpolation'
+        choices=['nearest', 'interpolation', 'bidirectional'],
+        help='Alignment method: nearest (all ref points), bidirectional (only mutual matches), or interpolation'
     )
     parser.add_argument(
         '--filter-no-time',

@@ -118,6 +118,59 @@ def resample_trajectory(
     return resampled
 
 
+
+def align_by_bidirectional(
+    traj1: np.ndarray,
+    traj2: np.ndarray,
+    max_distance_deg: float = 0.01
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Align trajectories by finding bidirectional nearest neighbors.
+    Only keeps points that are mutual nearest neighbors within a distance threshold.
+    
+    Args:
+        traj1: Reference trajectory (lon, lat, alt)
+        traj2: Trajectory to align
+        max_distance_deg: Maximum distance in degrees for considering a match
+        
+    Returns:
+        Tuple of (aligned_traj1, aligned_traj2) containing only mutual matches
+    """
+    aligned_traj1 = []
+    aligned_traj2 = []
+    
+    # For each point in traj1, find closest in traj2
+    for i, point1 in enumerate(traj1):
+        min_dist = float('inf')
+        closest_idx_in_traj2 = -1
+        
+        for j, point2 in enumerate(traj2):
+            dist = np.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx_in_traj2 = j
+        
+        # For the closest point in traj2, check if its closest in traj1 is the original point
+        if closest_idx_in_traj2 >= 0:
+            # Find closest in traj1 for this traj2 point
+            min_dist_back = float('inf')
+            closest_idx_in_traj1 = -1
+            
+            for k, point1_back in enumerate(traj1):
+                dist = np.sqrt((traj2[closest_idx_in_traj2][0] - point1_back[0])**2 + 
+                               (traj2[closest_idx_in_traj2][1] - point1_back[1])**2)
+                if dist < min_dist_back:
+                    min_dist_back = dist
+                    closest_idx_in_traj1 = k
+            
+            # If mutual match and within distance threshold
+            if closest_idx_in_traj1 == i and min_dist <= max_distance_deg:
+                aligned_traj1.append(point1)
+                aligned_traj2.append(traj2[closest_idx_in_traj2])
+    
+    return np.array(aligned_traj1), np.array(aligned_traj2)
+
+
 def align_trajectories(
     traj1: np.ndarray,
     traj2: np.ndarray,
@@ -138,6 +191,9 @@ def align_trajectories(
         # Find nearest neighbor alignment
         # For each point in traj1, find the closest point in traj2
         aligned_traj1, aligned_traj2 = align_by_nearest(traj1, traj2)
+    elif method == 'bidirectional':
+        # Find bidirectional matches (mutual nearest neighbors)
+        aligned_traj1, aligned_traj2 = align_by_bidirectional(traj1, traj2)
     else:
         # Default: interpolation
         min_length = min(len(traj1), len(traj2))
